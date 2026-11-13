@@ -1,4 +1,4 @@
-/* Interval 1.2 — 6 cohesive themes, offline-first PWA, timer and PiP preview.
+/* Interval 1.3 — 6 cohesive themes, offline-first PWA, timer and PiP preview.
    Client-side only. Storage migration from interval.app.v1 keeps prior sessions and records. */
 (() => {
   'use strict';
@@ -66,14 +66,20 @@
           elapsedMs: Math.max(0, Number(legacy.elapsedMs)),
           running: !!legacy.running,
           totalSec: clamp(Number(legacy.totalSec) || originalPreset.minutes * originalPreset.repeats * 60, 60, 720 * 99 * 60),
-          bonusSec: Math.max(0, Number(legacy.bonusSec) || 0)
+          bonusSec: Math.max(0, Number(legacy.bonusSec) || 0),
+          skippedSec: Math.max(0, Number(legacy.skippedSec) || 0),
+          skips: Array.isArray(legacy.skips) ? legacy.skips.filter(e => Number.isInteger(e?.phase) && e.phase >= 1 && e.phase <= originalPreset.repeats).slice(0, originalPreset.repeats) : []
         };
       }
     }
     const lastResult = raw.lastResult?.preset ? {
       preset: safePreset(raw.lastResult.preset),
       completedAt: Number(raw.lastResult.completedAt) || Date.now(),
-      totalSec: Math.max(0, Number(raw.lastResult.totalSec) || 0)
+      totalSec: Math.max(0, Number(raw.lastResult.totalSec) || 0),
+      completed: Number.isFinite(Number(raw.lastResult.completed)) ? Number(raw.lastResult.completed) : Number(raw.lastResult.preset?.repeats) || 0,
+      skipped: Math.max(0, Number(raw.lastResult.skipped) || 0),
+      actualSec: Math.max(0, Number(raw.lastResult.actualSec) || Number(raw.lastResult.totalSec) || 0),
+      status: String(raw.lastResult.status || '완료')
     } : null;
     return { data: { presets, selected, records, session, lastResult, theme: normalizeTheme(raw.theme) }, migrated: wasLegacy };
   }
@@ -118,6 +124,13 @@
     return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
   };
 
+  // Real elapsed time and virtual timeline position are deliberately separate.
+  // Each skip advances only the virtual timeline; it never adds to actual study time.
+  const virtualSeconds = (s, now = Date.now()) => elapsedSeconds(s, now) + (s.skippedSec || 0);
+  const normalCompletions = (s, virtual) => clamp(
+    Math.floor((virtual + .0001) / (s.preset.minutes * 60)) - (s.skips?.length || 0),
+    0, s.preset.repeats - (s.skips?.length || 0)
+  );
   function stats(now = Date.now()) {
     const p = current();
     if (!p) return null;
@@ -125,15 +138,18 @@
     const done = !s && !!data.lastResult;
     const phaseDuration = p.minutes * 60;
     const total = s ? fullSeconds(s) : (done ? data.lastResult.totalSec : phaseDuration * p.repeats);
-    const passed = s ? clamp(elapsedSeconds(s, now), 0, total) : (done ? total : 0);
-    const completed = done || passed >= total ? p.repeats : Math.min(p.repeats - 1, Math.floor(passed / phaseDuration));
+    const passed = s ? clamp(virtualSeconds(s, now), 0, total) : (done ? total : 0);
+    const skipped = s ? (s.skips?.length || 0) : (done ? data.lastResult.skipped || 0 : 0);
+    const completed = s ? normalCompletions(s, passed) : (done ? data.lastResult.completed : 0);
+    const actual = s ? Math.min(elapsedSeconds(s, now), Math.max(0, total - (s.skippedSec || 0))) : (done ? data.lastResult.actualSec : 0);
     const phase = done || passed >= total ? p.repeats : Math.min(p.repeats, Math.floor(passed / phaseDuration) + 1);
-    const lastStart = phaseDuration * (p.repeats - 1);
-    const phaseEnd = Math.min(total, phase * phaseDuration + (phase === p.repeats ? total - phaseDuration * p.repeats : 0));
     const phaseStart = (phase - 1) * phaseDuration;
+    const phaseEnd = phase === p.repeats ? total : phase * phaseDuration;
     const leftPhase = done || passed >= total ? 0 : Math.max(0, phaseEnd - passed);
     const phasePct = done || passed >= total ? 1 : clamp((passed - phaseStart) / Math.max(1, phaseEnd - phaseStart), 0, 1);
-    return { p, s, done, total, passed, completed, phase, leftPhase, remaining: Math.max(0, total - passed), pct: total ? Math.round(passed * 100 / total) : 0, phasePct };
+    return { p, s, done, total, passed, skipped, completed, actual, phase, leftPhase,
+      remaining: Math.max(0, total - passed), pct: total ? Math.round(passed * 100 / total) : 0,
+      actualPct: total ? Math.round(actual * 100 / total) : 0, phasePct };
   }
 
   function recordSession(status, now = Date.now()) {
@@ -141,31 +157,75 @@
     if (!s) return;
     const p = s.preset;
     const total = fullSeconds(s);
-    const elapsed = clamp(elapsedSeconds(s, now), 0, total);
-    if (elapsed < 1) return;
-    const endTime = status === '완료' && s.running
-      ? Math.round(s.anchor + total * 1000 - s.elapsedMs)
+    const actual = Math.min(elapsedSeconds(s, now), Math.max(0, total - (s.skippedSec || 0)));
+    const virtual = Math.min(total, virtualSeconds(s, now));
+    if (actual < 1 && !(s.skips?.length)) return;
+    const endTime = (status === '완료' || status === '일부 건너뜀') && s.running
+      ? Math.min(now, Math.round(s.anchor + (total - (s.skippedSec || 0)) * 1000 - s.elapsedMs))
       : now;
-    data.records.unshift({
+    const record = {
       id: id(), name: p.name, minutes: p.minutes, repeats: p.repeats,
-      completed: status === '완료' ? p.repeats : Math.min(p.repeats, Math.floor(elapsed / (p.minutes * 60))),
-      elapsedSec: Math.round(elapsed), start: s.startedAt, end: endTime, status
-    });
+      completed: normalCompletions(s, virtual), skipped: s.skips?.length || 0,
+      skips: (s.skips || []).map(item => ({ phase:item.phase, actualSec:item.actualSec })),
+      elapsedSec: Math.round(actual), start: s.startedAt, end: endTime, status
+    };
+    data.records.unshift(record);
     data.records = data.records.slice(0, 500);
   }
 
+  function finalizeSession(now = Date.now()) {
+    const s = data.session;
+    if (!s) return;
+    const status = (s.skips?.length || 0) ? '일부 건너뜀' : '완료';
+    const actual = Math.min(elapsedSeconds(s, now), Math.max(0, fullSeconds(s) - (s.skippedSec || 0)));
+    const completed = normalCompletions(s, fullSeconds(s));
+    recordSession(status, now);
+    data.lastResult = { preset: copyPreset(s.preset), completedAt: now, totalSec: fullSeconds(s),
+      completed, skipped: s.skips?.length || 0, actualSec: actual, status };
+    data.session = null;
+    if (!selected()) data.selected = data.presets[0]?.id ?? null;
+    save(); renderPresets(); render(true);
+    toast(status === '완료' ? '모든 회차가 완료되었습니다. 기록이 저장되었습니다.' : '세션이 종료되었습니다. 건너뛴 회차와 실제 시간이 기록되었습니다.');
+  }
   function finishIfNeeded() {
     const s = data.session;
     if (!s || !s.running) return;
-    if (elapsedSeconds(s) + .001 < fullSeconds(s)) return;
-    recordSession('완료');
-    data.lastResult = { preset: copyPreset(s.preset), completedAt: Date.now(), totalSec: fullSeconds(s) };
-    data.session = null;
-    if (!selected()) data.selected = data.presets[0]?.id ?? null;
-    save();
-    renderPresets();
-    render(true);
-    toast('모든 회차가 완료되었습니다. 기록이 저장되었습니다.');
+    if (virtualSeconds(s) + .001 < fullSeconds(s)) return;
+    finalizeSession();
+  }
+
+  function skipPhase() {
+    finishIfNeeded();
+    const s = data.session;
+    if (!s) return;
+    const x = stats();
+    if (!x || x.done || x.leftPhase <= 0) return;
+    if (x.phase === s.preset.repeats) {
+      openDialog(`<h3 id="dialogTitle">마지막 회차 건너뛰기</h3>
+        <p class="help">현재 마지막 회차를 건너뛰면 타이머가 종료됩니다. 이 회차는 <strong>정상 완료가 아닌 건너뜀</strong>으로 기록되며, 실제 실행한 시간만 저장됩니다.</p>
+        <div class="dialog-foot"><button class="btn" id="closeDialog" type="button">취소</button><button class="btn primary" id="confirmLastSkip" type="button">건너뛰고 종료</button></div>`);
+      $('confirmLastSkip').addEventListener('click', () => { closeDialog(); applySkip(); });
+      return;
+    }
+    applySkip();
+  }
+  function applySkip() {
+    const s = data.session;
+    if (!s) return;
+    const now = Date.now();
+    const x = stats(now);
+    if (!x || x.leftPhase <= 0) return;
+    const phaseAlreadySpent = x.passed - (x.phase - 1) * s.preset.minutes * 60;
+    s.skips ||= [];
+    if (s.skips.some(e => e.phase === x.phase)) return;
+    s.skips.push({ phase: x.phase, actualSec: Math.max(0, Math.round(phaseAlreadySpent)) });
+    s.skippedSec = (s.skippedSec || 0) + x.leftPhase;
+    if (virtualSeconds(s, now) + .001 >= fullSeconds(s)) {
+      finalizeSession(now);
+    } else {
+      save(); render(true); drawPip();
+      toast(`${x.phase}회차를 건너뛰었습니다. ${x.phase + 1}회차로 이동했습니다.`);
+    }
   }
 
   function startPause() {
@@ -175,7 +235,7 @@
       const p = selected();
       if (!p) return toast('먼저 타이머를 추가해주세요.');
       data.lastResult = null;
-      data.session = { presetId: p.id, preset: copyPreset(p), startedAt: now, anchor: now, elapsedMs: 0, running: true, totalSec: p.minutes * p.repeats * 60, bonusSec: 0 };
+      data.session = { presetId: p.id, preset: copyPreset(p), startedAt: now, anchor: now, elapsedMs: 0, running: true, totalSec: p.minutes * p.repeats * 60, bonusSec: 0, skippedSec: 0, skips: [] };
     } else if (data.session.running) {
       data.session.elapsedMs += Math.max(0, now - data.session.anchor);
       data.session.running = false;
@@ -376,10 +436,11 @@
       $('clock').textContent = '--:--'; $('phase').textContent = '설정 대기';
       $('finish').textContent = '새 타이머를 만들어 시작하세요';
       $('completeCount').textContent = '0 / 0'; $('totalLeft').textContent = '00:00';
+      $('roundSummary').textContent = '0회 · 0회'; $('actualTime').textContent = '실제 실행 00:00';
       $('pct').textContent = '0%'; $('progressBar').style.width = '0%';
       $('dialProgress').style.strokeDashoffset = String(circle);
       $('startPause').disabled = true; $('startPause').textContent = '▶ 시작';
-      $('reset').disabled = true; $('addMinute').disabled = true;
+      $('reset').disabled = true; $('addMinute').disabled = true; $('skipPhase').disabled = true;
       $('stateBadge').textContent = '대기'; $('stateBadge').className = 'state-chip paused';
       $('status').textContent = '타이머 추가는 왼쪽의 ＋ 버튼에서 할 수 있습니다.';
       renderRecordSummary(); return;
@@ -389,10 +450,12 @@
     $('currentSpec').textContent = `${p.minutes}분 × ${p.repeats}회 · 기본 ${p.minutes * p.repeats}분`;
     $('clock').textContent = timeText(x.leftPhase);
     $('phase').textContent = `${x.phase} / ${p.repeats}회차`;
-    $('finish').textContent = done ? '모든 회차 완료' : s?.running
+    $('finish').textContent = done ? (data.lastResult?.skipped ? '건너뛴 회차 포함 · 종료' : '모든 회차 완료') : s?.running
       ? `종료 예정 ${new Date(Date.now() + x.remaining * 1000).toLocaleTimeString('ko-KR', { hour:'2-digit', minute:'2-digit' })}`
       : s ? '일시정지 중' : '시작 대기 중';
     $('completeCount').textContent = `${x.completed} / ${p.repeats}`;
+    $('roundSummary').textContent = `${x.completed}회 · ${x.skipped}회`;
+    $('actualTime').textContent = `실제 실행 ${timeText(Math.floor(x.actual))} · 시간 달성률 ${x.actualPct}%`;
     $('totalLeft').textContent = timeText(x.remaining);
     $('pct').textContent = `${x.pct}%`;
     $('progressBar').style.width = `${x.pct}%`;
@@ -401,9 +464,10 @@
     $('startPause').textContent = s?.running ? 'Ⅱ 일시정지' : s ? '▶ 재개' : '▶ 시작';
     $('reset').disabled = !s && !done;
     $('addMinute').disabled = !s;
-    $('stateBadge').textContent = done ? '완료' : s?.running ? '진행 중' : s ? '일시정지' : '대기';
+    $('skipPhase').disabled = !s;
+    $('stateBadge').textContent = done ? (data.lastResult?.skipped ? '부분 완료' : '완료') : s?.running ? '진행 중' : s ? '일시정지' : '대기';
     $('stateBadge').className = 'state-chip' + (done ? ' done' : (s?.running ? '' : ' paused'));
-    $('status').textContent = done ? '완료 기록이 저장되었습니다. 다시 시작하려면 시작 버튼을 누르세요.'
+    $('status').textContent = done ? '종료 기록이 저장되었습니다. 다시 시작하려면 시작 버튼을 누르세요.'
       : s?.running ? '실제 시각을 기준으로 시간과 회차를 계산합니다.'
       : s ? '정지된 시간은 경과 시간에 포함되지 않습니다.'
       : '시작 버튼을 눌러 타이머를 실행하세요.';
@@ -414,7 +478,7 @@
     const rows = data.records.map(r => {
       const start = Number(r.start) || Date.now();
       const dt = new Date(start).toLocaleString('ko-KR', { month:'2-digit', day:'2-digit', hour:'2-digit', minute:'2-digit' });
-      return `<div class="record-row"><div><div class="record-title">${escapeHtml(r.name || '타이머')}</div><div class="record-sub">${escapeHtml(dt)} · ${Number(r.minutes)||0}분 × ${Number(r.repeats)||0}회 · 실제 ${timeText(Number(r.elapsedSec)||0)}<br>완료 회차 ${Number(r.completed)||0}/${Number(r.repeats)||0}</div></div><span class="tag ${r.status === '완료' ? '' : 'partial'}">${escapeHtml(r.status || '기록')}</span></div>`;
+      return `<div class="record-row"><div><div class="record-title">${escapeHtml(r.name || '타이머')}</div><div class="record-sub">${escapeHtml(dt)} · ${Number(r.minutes)||0}분 × ${Number(r.repeats)||0}회 · 실제 ${timeText(Number(r.elapsedSec)||0)}<br>정상 완료 ${Number(r.completed)||0}/${Number(r.repeats)||0} · 건너뜀 ${Number(r.skipped)||0}회</div></div><span class="tag ${r.status === '완료' ? '' : 'partial'}">${escapeHtml(r.status || '기록')}</span></div>`;
     }).join('');
     openDialog(`<h3 id="dialogTitle">타이머 기록</h3><p class="help">완료·중단한 세션을 현재 기기에 저장합니다. 삭제한 프리셋의 기록도 유지됩니다.</p>
       <div style="max-height:48vh;overflow:auto">${rows || '<p style="color:#8793a3">아직 저장된 기록이 없습니다.</p>'}</div>
@@ -422,8 +486,8 @@
     $('csvExport').addEventListener('click', exportCSV);
   }
   function exportCSV() {
-    const headers = ['상태', '타이머', '시작시각', '종료시각', '설정분', '반복횟수', '완료횟수', '실제초'];
-    const rows = data.records.map(r => [r.status, r.name, new Date(r.start).toISOString(), new Date(r.end).toISOString(), r.minutes, r.repeats, r.completed, r.elapsedSec]);
+    const headers = ['상태', '타이머', '시작시각', '종료시각', '설정분', '반복횟수', '완료횟수', '실제초', '건너뛴횟수', '건너뛴회차정보'];
+    const rows = data.records.map(r => [r.status, r.name, new Date(r.start).toISOString(), new Date(r.end).toISOString(), r.minutes, r.repeats, r.completed, r.elapsedSec, Number(r.skipped)||0, (r.skips||[]).map(e => `${e.phase}회차:${e.actualSec}초`).join('; ')]);
     const csv = [headers, ...rows].map(row => row.map(v => `"${String(v ?? '').replace(/"/g, '""')}"`).join(',')).join('\r\n');
     const url = URL.createObjectURL(new Blob(['\ufeff' + csv], { type: 'text/csv;charset=utf-8' }));
     const a = document.createElement('a'); a.href = url; a.download = 'Interval-records.csv'; a.click();
@@ -551,8 +615,8 @@
       el.textContent = '오프라인 설치 미지원 환경'; el.dataset.state = 'warn'; return;
     }
     try {
-      const cache = await caches.open('interval-shell-1.2.0');
-      const must = ['./index.html', './styles.css?v=1.2.0', './app.js?v=1.2.0'];
+      const cache = await caches.open('interval-shell-1.3.0');
+      const must = ['./index.html', './styles.css?v=1.3.0', './app.js?v=1.3.0'];
       const checks = await Promise.all(must.map(path => cache.match(path)));
       const ready = checks.every(Boolean);
       el.textContent = ready ? '오프라인 사용 준비 완료' : '오프라인 파일 저장 중';
@@ -568,6 +632,7 @@
   $('startPause').addEventListener('click', startPause);
   $('reset').addEventListener('click', reset);
   $('addMinute').addEventListener('click', addMinute);
+  $('skipPhase').addEventListener('click', skipPhase);
   $('recordsButton').addEventListener('click', recordsDialog);
   $('pipButton').addEventListener('click', () => pipDialog());
   $('themeButton').addEventListener('click', themeDialog);

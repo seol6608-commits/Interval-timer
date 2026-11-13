@@ -1,10 +1,10 @@
-/* Interval 1.2 — offline app shell. Works at GitHub Pages project subpaths. */
-const CACHE = 'interval-shell-1.2.0';
+/* Interval 1.3 — offline app shell. Works at GitHub Pages project subpaths. */
+const CACHE = 'interval-shell-1.3.0';
 const APP_FILES = [
   './',
   './index.html',
-  './styles.css?v=1.2.0',
-  './app.js?v=1.2.0',
+  './styles.css?v=1.3.0',
+  './app.js?v=1.3.0',
   './manifest.webmanifest',
   './icon.svg',
   './icon-192.png',
