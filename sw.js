@@ -1,10 +1,10 @@
-/* Interval 1.3 — offline app shell. Works at GitHub Pages project subpaths. */
-const CACHE = 'interval-shell-1.3.0';
+/* Interval 1.3.1 — offline app shell. Works at GitHub Pages project subpaths. */
+const CACHE = 'interval-shell-1.3.1';
 const APP_FILES = [
   './',
   './index.html',
-  './styles.css?v=1.3.0',
-  './app.js?v=1.3.0',
+  './styles.css?v=1.3.1',
+  './app.js?v=1.3.1',
   './manifest.webmanifest',
   './icon.svg',
   './icon-192.png',
@@ -22,7 +22,8 @@ self.addEventListener('install', event => {
 self.addEventListener('activate', event => {
   event.waitUntil((async () => {
     const names = await caches.keys();
-    await Promise.all(names.filter(name => name.startsWith('interval-') && name !== CACHE).map(name => caches.delete(name)));
+    const keep = new Set([CACHE, 'interval-shell-1.3.0']);
+    await Promise.all(names.filter(name => name.startsWith('interval-') && !keep.has(name)).map(name => caches.delete(name)));
     await self.clients.claim();
   })());
 });

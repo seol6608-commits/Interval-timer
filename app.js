@@ -1,4 +1,4 @@
-/* Interval 1.3 — 6 cohesive themes, offline-first PWA, timer and PiP preview.
+/* Interval 1.3.1 — 6 cohesive themes, offline-first PWA, timer and PiP preview.
    Client-side only. Storage migration from interval.app.v1 keeps prior sessions and records. */
 (() => {
   'use strict';
@@ -78,7 +78,7 @@
       totalSec: Math.max(0, Number(raw.lastResult.totalSec) || 0),
       completed: Number.isFinite(Number(raw.lastResult.completed)) ? Number(raw.lastResult.completed) : Number(raw.lastResult.preset?.repeats) || 0,
       skipped: Math.max(0, Number(raw.lastResult.skipped) || 0),
-      actualSec: Math.max(0, Number(raw.lastResult.actualSec) || Number(raw.lastResult.totalSec) || 0),
+      actualSec: Math.max(0, Number(raw.lastResult.actualSec ?? raw.lastResult.totalSec ?? 0) || 0),
       status: String(raw.lastResult.status || '완료')
     } : null;
     return { data: { presets, selected, records, session, lastResult, theme: normalizeTheme(raw.theme) }, migrated: wasLegacy };
@@ -615,14 +615,24 @@
       el.textContent = '오프라인 설치 미지원 환경'; el.dataset.state = 'warn'; return;
     }
     try {
-      const cache = await caches.open('interval-shell-1.3.0');
-      const must = ['./index.html', './styles.css?v=1.3.0', './app.js?v=1.3.0'];
+      const cache = await caches.open('interval-shell-1.3.1');
+      const must = ['./index.html', './styles.css?v=1.3.1', './app.js?v=1.3.1'];
       const checks = await Promise.all(must.map(path => cache.match(path)));
       const ready = checks.every(Boolean);
       el.textContent = ready ? '오프라인 사용 준비 완료' : '오프라인 파일 저장 중';
       el.dataset.state = ready ? 'ready' : 'pending';
     } catch (_) { el.textContent = '오프라인 저장 확인 불가'; el.dataset.state = 'warn'; }
   }
+
+  // Inform users explicitly when an updated worker is ready; avoid automatic reload
+  // while a session is active. Version label is always visible in the sidebar.
+  const updateBanner = $('updateBanner');
+  const offerUpdate = () => updateBanner.classList.remove('hidden');
+  $('updateNow').addEventListener('click', () => {
+    if (data.session && !window.confirm('실행 중인 타이머가 있습니다. 현재 상태를 저장하고 새 버전을 불러올까요?')) return;
+    save(); window.location.reload();
+  });
+  $('dismissUpdate').addEventListener('click', () => updateBanner.classList.add('hidden'));
 
   $('pipVideo').addEventListener('webkitpresentationmodechanged', () => { pipStatus = `Safari 표시 모드: ${$('pipVideo').webkitPresentationMode}`; });
   $('pipVideo').addEventListener('enterpictureinpicture', () => { pipStatus = 'PiP 진입 성공'; });
@@ -652,9 +662,9 @@
   window.addEventListener('pageshow', () => { finishIfNeeded(); render(true); drawPip(); });
   window.addEventListener('beforeunload', save);
   if ('serviceWorker' in navigator && (location.protocol === 'https:' || location.hostname === 'localhost')) {
-    navigator.serviceWorker.addEventListener('controllerchange', updateOfflineStatus);
+    navigator.serviceWorker.addEventListener('controllerchange', () => { updateOfflineStatus(); if (sessionStorage.getItem('interval.sw.controller')) offerUpdate(); else sessionStorage.setItem('interval.sw.controller','1'); });
     navigator.serviceWorker.register('./sw.js', { updateViaCache: 'none' })
-      .then(reg => { reg.update().catch(() => {}); return navigator.serviceWorker.ready; })
+      .then(reg => { reg.addEventListener('updatefound', () => { const candidate = reg.installing; candidate?.addEventListener('statechange', () => { if (candidate.state === 'installed' && navigator.serviceWorker.controller) offerUpdate(); }); }); reg.update().catch(() => {}); return navigator.serviceWorker.ready; })
       .then(() => updateOfflineStatus())
       .catch(() => { $('offlineStatus').textContent = '오프라인 준비 실패 — 다시 온라인에서 열어주세요'; });
     updateOfflineStatus();

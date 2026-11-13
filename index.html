@@ -6,19 +6,19 @@
   <meta name="theme-color" content="#ffffff">
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-title" content="Interval">
-  <meta name="description" content="Interval 1.3 — 6종 테마 및 오프라인 반복 타이머">
-  <title>Interval 1.3 — 반복 타이머</title>
+  <meta name="description" content="Interval 1.3.1 — 6종 테마 및 오프라인 반복 타이머">
+  <title>Interval 1.3.1 — 반복 타이머</title>
   <link rel="manifest" href="manifest.webmanifest">
   <link rel="icon" href="icon.svg" type="image/svg+xml">
   <link rel="apple-touch-icon" sizes="180x180" href="apple-touch-icon.png">
   <link rel="icon" type="image/png" sizes="192x192" href="icon-192.png">
-  <link rel="stylesheet" href="styles.css?v=1.3.0">
-  <script src="app.js?v=1.3.0" defer></script>
+  <link rel="stylesheet" href="styles.css?v=1.3.1">
+  <script src="app.js?v=1.3.1" defer></script>
 </head>
 <body>
   <div class="shell">
     <aside class="side left" aria-label="타이머 프리셋">
-      <div class="brand"><span class="brandmark" aria-hidden="true">◴</span><span>Interval<small>1.3</small></span></div>
+      <div class="brand"><span class="brandmark" aria-hidden="true">◴</span><span>Interval<small>1.3.1</small></span></div>
       <button id="themeButton" type="button" class="theme-launch" aria-label="테마 선택"><span class="theme-swatch" aria-hidden="true"></span><span>테마 <strong id="themeName">화이트</strong></span><span aria-hidden="true">⌄</span></button>
       <div class="sectionhead"><h2>타이머 목록</h2><span id="presetCount" class="count">3개</span></div>
       <button type="button" id="addPreset" class="add"><b aria-hidden="true">＋</b> 새로운 타이머</button>
@@ -29,7 +29,7 @@
     </aside>
 
     <main class="main">
-      <div class="mobile-header"><div class="brand"><span class="brandmark" aria-hidden="true">◴</span><span>Interval<small>1.3</small></span><button id="mobileThemeButton" class="mobile-theme" aria-label="테마 선택" type="button">◐ 테마</button></div></div>
+      <div class="mobile-header"><div class="brand"><span class="brandmark" aria-hidden="true">◴</span><span>Interval<small>1.3.1</small></span><button id="mobileThemeButton" class="mobile-theme" aria-label="테마 선택" type="button">◐ 테마</button></div></div>
       <h1 id="currentName">기본 타이머</h1>
       <p id="currentSpec" class="subtitle">15분 × 3회 · 총 45분</p>
       <div class="dial">
@@ -43,11 +43,15 @@
           <div id="finish" class="finish">시작 대기 중</div>
         </div>
       </div>
-      <div class="controls">
-        <button id="startPause" class="btn primary" type="button">▶ 시작</button>
-        <button id="skipPhase" class="btn skip" type="button" title="현재 회차를 건너뛰고 다음 회차로 이동">⏭ 다음 회차</button>
-        <button id="reset" class="btn" type="button">↺ 초기화</button>
-        <button id="addMinute" class="btn" type="button">＋1분</button>
+      <div class="controls" aria-label="타이머 조작">
+        <div class="control-primary-row">
+          <button id="startPause" class="btn primary" type="button">▶ 시작</button>
+          <button id="skipPhase" class="btn skip" type="button" title="남은 시간을 건너뛰고 다음 회차로 이동">⏭ 다음 회차</button>
+        </div>
+        <div class="control-secondary-row">
+          <button id="reset" class="btn" type="button">↺ 초기화</button>
+          <button id="addMinute" class="btn" type="button">＋1분</button>
+        </div>
       </div>
       <div class="mini-actions">
         <button id="pipButton" class="ghost" type="button">▣ 미니 화면(PiP)</button>
@@ -69,6 +73,7 @@
   <div id="dialogLayer" class="overlay hidden" role="presentation">
     <section id="dialog" class="dialog" role="dialog" aria-modal="true" aria-labelledby="dialogTitle"></section>
   </div>
+  <div id="updateBanner" class="update-banner hidden" role="status" aria-live="polite"><span>새 버전이 준비되었습니다.</span><button id="updateNow" type="button">업데이트</button><button id="dismissUpdate" type="button" aria-label="알림 닫기">×</button></div>
   <div id="toast" class="toast hidden" role="status" aria-live="polite"></div>
   <canvas id="pipCanvas" width="640" height="360" class="hidden" aria-hidden="true"></canvas>
   <video id="pipVideo" playsinline muted autoplay style="position:fixed;left:-9999px;top:0;width:320px;height:180px;pointer-events:none" aria-label="PiP 타이머 영상"></video>
